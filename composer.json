@@ -1,0 +1,11 @@
+{
+    "name": "lbonnefond/redoublants-tdtp",
+    "description": "Tableau des redoublants potentiels avec dispensations de TD/TP par semestre",
+    "require": {
+        "php": ">=8.2",
+        "phpoffice/phpspreadsheet": "^2.2"
+    },
+    "autoload": {
+        "psr-4": { "LBonnefond\\RedoublantsTdTp\\": "src/" }
+    }
+}
