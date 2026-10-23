@@ -7,6 +7,7 @@ use LBonnefond\RedoublantsTdTp\ApofileYearParser;
 use LBonnefond\RedoublantsTdTp\ApofileSemesterParser;
 use LBonnefond\RedoublantsTdTp\MatterMatcher;
 use LBonnefond\RedoublantsTdTp\ExcelExporter;
+use LBonnefond\RedoublantsTdTp\IaListParser;
 
 session_start();
 
@@ -15,6 +16,7 @@ $ACQUIRED_SEM = ['ADM', 'ACQ'];
 
 $yearData = $_SESSION['year'] ?? null;
 $semData = $_SESSION['sem'] ?? null;
+$iaData = $_SESSION['ia'] ?? null;
 $courseConfig = $_SESSION['course_config'] ?? null;
 $flash = $_SESSION['flash'] ?? null;
 unset($_SESSION['flash']);
@@ -97,9 +99,7 @@ function courseDefaults(array $course): array
     ];
 }
 
-// ---------- sélection des potentiels redoublants ----------
-// Un « potentiel redoublant » = statut annuel ∈ {AJ, DEF, DIS} (sinon, repli sur le statut du semestre).
-// Le statut du semestre travaillé est conservé pour décider ACQ (acquis) vs suive le semestre.
+// Sélection des potentiels redoublants : statut annuel ∈ {AJ,DEF,DIS} (repli : statut du semestre).
 function selectPotential(array $yearData, int $selectedSem, array $reDoube, array $acquired): array
 {
     $list = [];
@@ -132,10 +132,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'clear') {
-        unset($_SESSION['year'], $_SESSION['sem'], $_SESSION['selected_sem'], $_SESSION['course_config']);
+        unset($_SESSION['year'], $_SESSION['sem'], $_SESSION['selected_sem'], $_SESSION['course_config'], $_SESSION['ia']);
         $yearData = null;
         $semData = null;
         $courseConfig = null;
+        $iaData = null;
         $selectedSem = null;
         $flash = 'Session vidée.';
     }
@@ -160,11 +161,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             try {
                 $p = new ApofileYearParser($tmp, $name);
-                $_SESSION['year'][] = [
-                    'filename' => $name,
-                    'warnings' => $p->warnings,
-                    'data' => $p->toArray(),
-                ];
+                $_SESSION['year'][] = ['filename' => $name, 'warnings' => $p->warnings, 'data' => $p->toArray()];
                 $added++;
             } catch (\Throwable $ex) {
                 $uploadErrors[] = "$name : " . $ex->getMessage();
@@ -194,11 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             try {
                 $p = new ApofileSemesterParser($tmp, $name);
-                $_SESSION['sem'][] = [
-                    'filename' => $name,
-                    'warnings' => $p->warnings,
-                    'data' => $p->toArray(),
-                ];
+                $_SESSION['sem'][] = ['filename' => $name, 'warnings' => $p->warnings, 'data' => $p->toArray()];
                 $added++;
             } catch (\Throwable $ex) {
                 $uploadErrors[] = "$name : " . $ex->getMessage();
@@ -209,6 +202,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         unset($_SESSION['course_config']);
         $courseConfig = null;
         $flash = $added . " PV de semestre ajouté(s) — total : " . count($semData) . " — ; " . count($uploadErrors) . " erreur(s).";
+    }
+
+    if ($action === 'ia') {
+        if (!isset($_SESSION['ia'])) {
+            $_SESSION['ia'] = ['students' => [], 'warnings' => []];
+        }
+        $files = $_FILES['ia_files'] ?? [];
+        $count = is_array($files['name'] ?? null) ? count($files['name']) : 1;
+        $added = 0;
+        for ($i = 0; $i < $count; $i++) {
+            $name = $files['name'][$i] ?? '';
+            if (trim($name) === '') {
+                continue;
+            }
+            $tmp = $files['tmp_name'][$i] ?? '';
+            $err = $files['error'][$i] ?? UPLOAD_ERR_NO_FILE;
+            if ($err !== UPLOAD_ERR_OK) {
+                $uploadErrors[] = "$name : erreur d'upload (code $err).";
+                continue;
+            }
+            try {
+                $p = new IaListParser($tmp);
+                $students = $p->toArray()['students'];
+                $existing = [];
+                foreach ($_SESSION['ia']['students'] as $s) {
+                    $existing[$s['id']] = true;
+                }
+                foreach ($students as $s) {
+                    if (!isset($existing[$s['id']])) {
+                        $_SESSION['ia']['students'][] = $s;
+                        $existing[$s['id']] = true;
+                    }
+                }
+                foreach ($p->warnings as $w) {
+                    $_SESSION['ia']['warnings'][] = $name . ' : ' . $w;
+                }
+                $added++;
+            } catch (\Throwable $ex) {
+                $uploadErrors[] = "$name : " . $ex->getMessage();
+            }
+        }
+        $iaData = $_SESSION['ia'];
+        $flash = $added . " fichier IA ajouté(s) — total : " . count($iaData['students']) . " inscrit(s) — ; " . count($uploadErrors) . " erreur(s).";
     }
 
     if ($action === 'config') {
@@ -246,16 +282,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'export') {
         if ($yearData && $semData && $selectedSem !== null && $courseConfig) {
             $redoublants = selectPotential($yearData, $selectedSem, $REDOUB_STATUSES, $ACQUIRED_SEM);
-
             $matcher = new MatterMatcher();
             $courses = $matcher->match($semData);
             $effective = $matcher->mergeByAcronym($courses, $courseConfig);
-
-            $exporter = new ExcelExporter();
-            $xlsx = $exporter->export($redoublants, $effective, $courses, $semData, $selectedSem);
-
+            $xlsx = (new ExcelExporter())->export($redoublants, $effective, $courses, $semData, $selectedSem);
             header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             header('Content-Disposition: attachment; filename="redoublants_tdtp_S' . $selectedSem . '.xlsx"');
+            header('Content-Length: ' . strlen($xlsx));
+            echo $xlsx;
+            exit;
+        }
+    }
+
+    if ($action === 'export-ia') {
+        if ($yearData && $semData && $selectedSem !== null && $courseConfig && $iaData) {
+            $redoublants = selectPotential($yearData, $selectedSem, $REDOUB_STATUSES, $ACQUIRED_SEM);
+            $matcher = new MatterMatcher();
+            $courses = $matcher->match($semData);
+            $effective = $matcher->mergeByAcronym($courses, $courseConfig);
+            $xlsx = (new ExcelExporter())->exportIa($iaData['students'], $redoublants, $effective, $courses, $semData);
+            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            header('Content-Disposition: attachment; filename="redoublants_inscrits_S' . $selectedSem . '.xlsx"');
             header('Content-Length: ' . strlen($xlsx));
             echo $xlsx;
             exit;
@@ -268,12 +315,28 @@ if ($semData) {
     $courses = (new MatterMatcher())->match($semData);
 }
 
-// Liste affichée en étape 1 (si PV d'année + semestre choisis)
 $re = null;
 if ($yearData && $selectedSem !== null) {
     $re = selectPotential($yearData, $selectedSem, $REDOUB_STATUSES, $ACQUIRED_SEM);
 }
 $nFollow = $re ? count(array_filter($re, fn($s) => !$s['acq'])) : 0;
+
+// Croisement IA x potentiels redoublants
+$enrolledRedoublants = null;
+$notEnrolled = null;
+if ($re !== null && $iaData) {
+    $iaIds = [];
+    foreach ($iaData['students'] as $ia) {
+        $iaIds[$ia['id']] = true;
+    }
+    $enrolledRedoublants = 0;
+    foreach ($re as $r) {
+        if (isset($iaIds[$r['numero']])) {
+            $enrolledRedoublants++;
+        }
+    }
+    $notEnrolled = count($re) - $enrolledRedoublants;
+}
 ?>
 <!doctype html>
 <html lang="fr">
@@ -305,8 +368,6 @@ $nFollow = $re ? count(array_filter($re, fn($s) => !$s['acq'])) : 0;
   .filelist { list-style:none; padding:0; margin:8px 0; }
   .filelist li { border:1px solid #e0e0e0; border-radius:6px; background:#fff; padding:5px 10px; margin:4px 0; font-size:13px; display:flex; justify-content:space-between; align-items:center; }
   .filelist li.empty { color:#999; border-style:dashed; background:transparent; }
-
-  /* ----- Config compacte ----- */
   table.cfg { width:100%; border-collapse:collapse; font-size:12.5px; margin:10px 0; }
   table.cfg th, table.cfg td { border:1px solid #e3e3e0; padding:3px 6px; vertical-align:middle; text-align:left; }
   table.cfg thead th { background:#f0f0ee; position:sticky; top:0; z-index:2; }
@@ -320,8 +381,6 @@ $nFollow = $re ? count(array_filter($re, fn($s) => !$s['acq'])) : 0;
   .exam-pills { display:flex; flex-wrap:wrap; gap:4px 8px; }
   .exam-pill { display:inline-flex; align-items:center; gap:4px; border:1px solid #ececec; border-radius:10px; padding:1px 6px; background:#fff; }
   .exam-pill .lbl { font-size:11.5px; color:#333; }
-
-  /* ----- Tableau redoublants : tri + collapse ----- */
   table.sortable th { cursor: pointer; user-select: none; }
   table.sortable th:hover { background: #e8e8e5; }
   table.sortable th .sort-icon { font-size: 10px; margin-left: 3px; color: #666; }
@@ -337,7 +396,7 @@ $nFollow = $re ? count(array_filter($re, fn($s) => !$s['acq'])) : 0;
 </style>
 </head>
 <body>
-<h1>Redoublants TD/TP — validation (Lot 1 + 2 + 3)</h1>
+<h1>Redoublants TD/TP — validation (Lot 1 à 4)</h1>
 
 <?php if ($flash): ?><div class="flash"><?= e($flash) ?></div><?php endif; ?>
 <?php if (!empty($uploadErrors)): ?>
@@ -462,7 +521,7 @@ $nFollow = $re ? count(array_filter($re, fn($s) => !$s['acq'])) : 0;
     <p class="muted">Une ligne par groupe de matière (regroupés entre parcours). Coche <b>Affichée ?</b> pour inclure la matière dans le tableau exporté (avec la mention ACQ/NACQ/DEF/DIS, ACQ en surbrillance).
     Pour chaque épreuve, coche si sa <b>note doit être conservée</b> : elle apparaîtra alors dans une colonne, surlignée si elle dépasse le <b>seuil /20</b>.
     Les cases épreuves sont pré-cochées selon le libellé (ex. « TP/TD ») : ajuste.</p>
-    <p class="muted"><b>Astuce — fusion :</b> donne le <b>même acronyme</b> à deux groupes pour les traiter comme une seule matière (utile quand le regroupement automatique a échoué à cause d'un code erroné dans le PV). Un acronyme = une matière.</p>
+    <p class="muted"><b>Astuce — fusion :</b> donne le <b>même acronyme</b> à deux groupes pour les traiter comme une seule matière. Un acronyme = une matière.</p>
 
     <form method="post">
       <input type="hidden" name="action" value="config">
@@ -512,7 +571,6 @@ $nFollow = $re ? count(array_filter($re, fn($s) => !$s['acq'])) : 0;
     </form>
   </div>
 
-  <!-- Récap de validation -->
   <?php if ($courseConfig): ?>
   <?php
     $effective = (new MatterMatcher())->mergeByAcronym($courses, $courseConfig);
@@ -566,7 +624,7 @@ $nFollow = $re ? count(array_filter($re, fn($s) => !$s['acq'])) : 0;
       <?php if ($nShown > 0 && $yearData && $selectedSem !== null): ?>
         <form method="post" id="form-export">
           <input type="hidden" name="action" value="export">
-          <button type="submit">⬇ Exporter l'Excel des redoublants (Semestre <?= $selectedSem ?>)</button>
+          <button type="submit">⬇ Exporter l'Excel des redoublants potentiels (Semestre <?= $selectedSem ?>)</button>
         </form>
       <?php else: ?>
         <span class="muted">Aucune matière sélectionnée pour l'export.</span>
@@ -575,6 +633,48 @@ $nFollow = $re ? count(array_filter($re, fn($s) => !$s['acq'])) : 0;
   </div>
   <?php endif; ?>
   <?php endif; ?>
+<?php endif; ?>
+
+<!-- ================= ÉTAPE 4 : IA + EXPORT INSCRITS ================= -->
+<h2>Étape 4 — Inscriptions (IA) de la nouvelle année + export des redoublants inscrits</h2>
+<div class="card">
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="action" value="ia">
+    <div class="dropzone" id="dz-ia">
+      <p>Glisse-dépose ici le fichier des inscriptions administratives (IA) de la nouvelle année, ou clique pour le choisir.</p>
+      <input type="file" name="ia_files[]" id="fi-ia" multiple accept=".xlsx,.xls">
+    </div>
+    <ul class="filelist" id="fl-ia"></ul>
+    <button type="submit" id="sb-ia">Ajouter le fichier IA</button>
+  </form>
+</div>
+
+<?php if ($iaData): ?>
+  <div class="card">
+    <b>Liste d'inscriptions (IA)</b> — <?= count($iaData['students']) ?> étudiant(s) inscrit(s) la nouvelle année
+    <?php if (!empty($iaData['warnings'])): ?>
+      <div class="warn"><?= e(implode(' | ', $iaData['warnings'])) ?></div>
+    <?php endif; ?>
+    <?php if ($re !== null): ?>
+      <div style="margin-top:8px">
+        <b>Croisement avec les potentiels redoublants :</b>
+        <span class="ok"><?= $enrolledRedoublants ?> redoublant(s) effectivement inscrit(s)</span>
+        &nbsp;·&nbsp; <span class="warn"><?= $notEnrolled ?> potentiel(s) redoublant(s) non réinscrit(s) → exclus de l'export</span>
+      </div>
+      <?php if ($courseConfig && $selectedSem !== null): ?>
+        <div style="margin-top:14px">
+          <form method="post">
+            <input type="hidden" name="action" value="export-ia">
+            <button type="submit">⬇ Exporter l'Excel des inscriptions (redoublants inscrits, Semestre <?= $selectedSem ?>)</button>
+          </form>
+        </div>
+      <?php else: ?>
+        <div class="muted">Renseigne la config des matières (Étape 3) et choisis un semestre (Étape 1) pour activer l'export.</div>
+      <?php endif; ?>
+    <?php else: ?>
+      <div class="muted">Charge d'abord les PV d'année et choisis un semestre (Étape 1) pour croiser avec les redoublants.</div>
+    <?php endif; ?>
+  </div>
 <?php endif; ?>
 
 <div class="card">
@@ -643,8 +743,8 @@ $nFollow = $re ? count(array_filter($re, fn($s) => !$s['acq'])) : 0;
   document.addEventListener('DOMContentLoaded', function(){
     setupDropzone('#dz-year', '#fi-year', '#fl-year', '#sb-year');
     setupDropzone('#dz-sem', '#fi-sem', '#fl-sem', '#sb-sem');
+    setupDropzone('#dz-ia', '#fi-ia', '#fl-ia', '#sb-ia');
 
-    // --- Tri des colonnes du tableau redoublants ---
     var tbl = document.querySelector('#tbl-redoublants');
     if (tbl) {
       var headers = tbl.querySelectorAll('thead th');
@@ -676,7 +776,6 @@ $nFollow = $re ? count(array_filter($re, fn($s) => !$s['acq'])) : 0;
       });
     }
 
-    // --- Collapse / expand du tableau redoublants ---
     var cBtn = document.querySelector('#collapse-redoublants');
     var cWrap = document.querySelector('#redoublants-wrap');
     if (cBtn && cWrap) {

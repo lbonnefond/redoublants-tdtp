@@ -146,6 +146,22 @@ class ApofileSemesterParser extends PvParserBase
         }
     }
 
+    /** Normalise la mention UE : ACQ/ACQA => ACQ, NACQ/NACQA => NACQ. Les autres (DIS, DEF, ADM…) inchangées. */
+    private function normalizeMention(string $m): string
+    {
+        $m = trim($m);
+        if ($m === '') {
+            return '';
+        }
+        if (str_starts_with($m, 'ACQ')) {
+            return 'ACQ';
+        }
+        if (str_starts_with($m, 'NACQ')) {
+            return 'NACQ';
+        }
+        return $m;
+    }
+
     private function readStudents(): void
     {
         $maxRow = $this->highestDataRow();
@@ -155,7 +171,7 @@ class ApofileSemesterParser extends PvParserBase
             if (!is_numeric($raw)) {
                 continue;
             }
-            $nu = (int)$raw;
+            $nu = (int) $raw;
             if ($nu < 100000) {
                 continue;
             }
@@ -177,7 +193,7 @@ class ApofileSemesterParser extends PvParserBase
                 }
                 $st['ues'][$ue['code']] = [
                     'note' => $this->textAt($ue['noteCol'], $r),
-                    'mention' => $this->textAt($ue['mentionCol'], $r),
+                    'mention' => $this->normalizeMention($this->textAt($ue['mentionCol'], $r)),
                     'anSession' => $this->textAt($ue['anSessionCol'], $r),
                     'exams' => $exams,
                 ];
