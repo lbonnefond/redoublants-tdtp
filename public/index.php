@@ -80,26 +80,21 @@ function examShortLabel(string $label): string
     return $label;
 }
 
+/** Config par défaut : tout est vide (aucune case pré-cochée, pas d'affichage). */
 function courseDefaults(array $course): array
 {
     $exams = [];
-    $hasTdtP = false;
     foreach ($course['exams'] as $label) {
-        $keep = count(examTags($label)) > 0;
-        $exams[$label] = $keep;
-        if ($keep) {
-            $hasTdtP = true;
-        }
+        $exams[$label] = false;
     }
     return [
         'acronym' => '',
         'threshold' => null,
-        'display' => $hasTdtP,
         'exams' => $exams,
     ];
 }
 
-// Sélection des potentiels redoublants : statut annuel ∈ {AJ,DEF,DIS} (repli : statut du semestre).
+// Sélection des potentiels redoublants
 function selectPotential(array $yearData, int $selectedSem, array $reDoube, array $acquired): array
 {
     $list = [];
@@ -107,9 +102,14 @@ function selectPotential(array $yearData, int $selectedSem, array $reDoube, arra
         $hasYear = $f['data']['has_year_status'];
         foreach ($f['data']['students'] as $s) {
             $ss = $s['semester_status'][(string)$selectedSem] ?? '';
-            $isPotential = $hasYear
-                ? in_array($s['year_status'], $reDoube, true)
-                : in_array($ss, $reDoube, true);
+            $yearStatus = $s['year_status'];
+            if ($yearStatus === '' || $yearStatus === ' ') {
+                $isPotential = in_array($ss, $reDoube, true);
+            } elseif ($hasYear) {
+                $isPotential = in_array($yearStatus, $reDoube, true);
+            } else {
+                $isPotential = in_array($ss, $reDoube, true);
+            }
             if (!$isPotential) {
                 continue;
             }
@@ -118,7 +118,7 @@ function selectPotential(array $yearData, int $selectedSem, array $reDoube, arra
                 'nom' => $s['nom'],
                 'prenom' => $s['prenom'],
                 'parcours' => $f['data']['parcours'],
-                'year_status' => $s['year_status'],
+                'year_status' => $yearStatus,
                 'sem_status' => $ss,
                 'acq' => in_array($ss, $acquired, true),
             ];
@@ -168,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         $yearData = $_SESSION['year'];
-        $flash = $added . " PV d'année ajouté(s) — total : " . count($yearData) . " — ; " . count($uploadErrors) . " erreur(s).";
+        $flash = $added . " PV d'année ajouté(s) - total : " . count($yearData) . " - ; " . count($uploadErrors) . " erreur(s).";
     }
 
     if ($action === 'sem') {
@@ -201,7 +201,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $semData = $_SESSION['sem'];
         unset($_SESSION['course_config']);
         $courseConfig = null;
-        $flash = $added . " PV de semestre ajouté(s) — total : " . count($semData) . " — ; " . count($uploadErrors) . " erreur(s).";
+        $flash = $added . " PV de semestre ajouté(s) - total : " . count($semData) . " - ; " . count($uploadErrors) . " erreur(s).";
     }
 
     if ($action === 'ia') {
@@ -244,7 +244,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         $iaData = $_SESSION['ia'];
-        $flash = $added . " fichier IA ajouté(s) — total : " . count($iaData['students']) . " inscrit(s) — ; " . count($uploadErrors) . " erreur(s).";
+        $flash = $added . " fichier IA ajouté(s) - total : " . count($iaData['students']) . " inscrit(s) - ; " . count($uploadErrors) . " erreur(s).";
     }
 
     if ($action === 'config') {
@@ -256,7 +256,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $acronym = trim((string)($_POST['acronym'][$i] ?? ''));
                 $rawTh = (string)($_POST['threshold'][$i] ?? '');
                 $threshold = (trim($rawTh) === '' || !is_numeric($rawTh)) ? null : (float)$rawTh;
-                $display = isset($_POST['display'][$i]);
                 $exams = [];
                 foreach ($course['exams'] as $j => $label) {
                     $exams[$label] = isset($_POST['exam'][$i][$j]);
@@ -266,10 +265,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'name' => $course['name'],
                     'acronym' => $acronym,
                     'threshold' => $threshold,
-                    'display' => $display,
                     'exams' => $exams,
                 ];
-                if ($display) {
+                if ($acronym !== '') {
                     $nShown++;
                 }
             }
@@ -321,7 +319,6 @@ if ($yearData && $selectedSem !== null) {
 }
 $nFollow = $re ? count(array_filter($re, fn($s) => !$s['acq'])) : 0;
 
-// Croisement IA x potentiels redoublants
 $enrolledRedoublants = null;
 $notEnrolled = null;
 if ($re !== null && $iaData) {
@@ -342,7 +339,7 @@ if ($re !== null && $iaData) {
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>Redoublants TD/TP — validation</title>
+<title>Redoublants TD/TP - validation</title>
 <style>
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color:#1b1b1b; }
   h1 { font-size: 22px; }
@@ -371,7 +368,6 @@ if ($re !== null && $iaData) {
   table.cfg { width:100%; border-collapse:collapse; font-size:12.5px; margin:10px 0; }
   table.cfg th, table.cfg td { border:1px solid #e3e3e0; padding:3px 6px; vertical-align:middle; text-align:left; }
   table.cfg thead th { background:#f0f0ee; position:sticky; top:0; z-index:2; }
-  table.cfg td.center { text-align:center; }
   table.cfg tr.shown { background:#f6faff; }
   table.cfg .matter { font-weight:600; }
   table.cfg .sub { display:block; color:#999; font-size:11px; margin-top:1px; }
@@ -396,7 +392,7 @@ if ($re !== null && $iaData) {
 </style>
 </head>
 <body>
-<h1>Redoublants TD/TP — validation (Lot 1 à 4)</h1>
+<h1>Redoublants TD/TP - validation (Lot 1 a 4)</h1>
 
 <?php if ($flash): ?><div class="flash"><?= e($flash) ?></div><?php endif; ?>
 <?php if (!empty($uploadErrors)): ?>
@@ -405,7 +401,7 @@ if ($re !== null && $iaData) {
   </div>
 <?php endif; ?>
 
-<!-- ================= ÉTAPE 1 : PV ANNÉE ================= -->
+<!-- ================= ETAPE 1 : PV ANNEE ================= -->
 <h2>Étape 1 — PV de l'année (tous parcours, accumulables)</h2>
 <div class="card">
   <form method="post" enctype="multipart/form-data">
@@ -422,10 +418,10 @@ if ($re !== null && $iaData) {
 <?php if ($yearData): ?>
   <?php foreach ($yearData as $f): $d = $f['data']; ?>
     <div class="card">
-      <b><?= e($f['filename']) ?></b> — parcours : <b><?= e($d['parcours']) ?></b>
+      <b><?= e($f['filename']) ?></b> - parcours : <b><?= e($d['parcours']) ?></b>
       <?php if (!$d['has_year_status']): ?> <span class="warn">(statut annuel absent)</span><?php endif; ?>
       <div style="margin-top:6px">
-        Étudiants : <b><?= count($d['students']) ?></b> &nbsp;·&nbsp;
+        Étudiants : <b><?= count($d['students']) ?></b> &nbsp;-&nbsp;
         Statut annuel : <?= distHtml(array_column($d['students'], 'year_status')) ?>
       </div>
       <?php if (!empty($f['warnings'])): ?>
@@ -435,7 +431,7 @@ if ($re !== null && $iaData) {
   <?php endforeach; ?>
 
   <div class="card">
-    <b>Semestres détectés</b> — choisissez le semestre à travailler :<br>
+    <b>Semestres détectés</b> - choisissez le semestre à travailler :<br>
     <?php
       $allSem = [];
       foreach ($yearData as $f) { $allSem = array_merge($allSem, $f['data']['sem_numbers']); }
@@ -448,11 +444,11 @@ if ($re !== null && $iaData) {
 
   <?php if ($re !== null): ?>
     <div class="card">
-      <b>Potentiels redoublants — Semestre <?= $selectedSem ?></b>
-      <span class="ok"><?= count($re) ?> étudiant(s) (statut annuel ∈ {AJ, DEF, DIS}) — dont <b><?= $nFollow ?></b> suivent ce semestre, les <?= count($re) - $nFollow ?> autres l'ont acquis (ACQ)</span>
-      <button type="button" class="collapse-btn" id="collapse-redoublants" data-count="<?= count($re) ?>">▲ Réduire</button>
+      <b>Potentiels redoublants - Semestre <?= $selectedSem ?></b>
+      <span class="ok"><?= count($re) ?> étudiant(s) (statut annuel ∈ {AJ, DEF, DIS}) - dont <b><?= $nFollow ?></b> suivent ce semestre, les <?= count($re) - $nFollow ?> autres l'ont acquis (ACQ)</span>
+      <button type="button" class="collapse-btn" id="collapse-redoublants" data-count="<?= count($re) ?>">▼ Déplier (<?= count($re) ?> étudiants)</button>
 
-      <div class="redoublants-wrap" id="redoublants-wrap">
+      <div class="redoublants-wrap collapsed" id="redoublants-wrap">
         <table class="sortable" id="tbl-redoublants">
           <thead>
             <tr>
@@ -460,8 +456,8 @@ if ($re !== null && $iaData) {
               <th>Nom</th>
               <th>Prénom</th>
               <th>Parcours</th>
-              <th>Semestre</th>
               <th>Statut année</th>
+              <th>Semestre</th>
             </tr>
           </thead>
           <tbody>
@@ -471,8 +467,8 @@ if ($re !== null && $iaData) {
               <td><?= e($s['nom']) ?></td>
               <td><?= e($s['prenom']) ?></td>
               <td><?= e($s['parcours']) ?></td>
-              <td<?= $s['acq'] ? ' class="cell-acq"' : '' ?>><?= $s['acq'] ? 'ACQ' : e($s['sem_status']) ?></td>
               <td><?= e($s['year_status']) ?></td>
+              <td<?= $s['acq'] ? ' class="cell-acq"' : '' ?>><?= $s['acq'] ? 'ACQ' : e($s['sem_status']) ?></td>
             </tr>
           <?php endforeach; ?>
           </tbody>
@@ -482,7 +478,7 @@ if ($re !== null && $iaData) {
   <?php endif; ?>
 <?php endif; ?>
 
-<!-- ================= ÉTAPE 2 : PV SEMESTRE ================= -->
+<!-- ================= ETAPE 2 : PV SEMESTRE ================= -->
 <h2>Étape 2 — PV du semestre choisi (tous parcours, accumulables)</h2>
 <div class="card">
   <form method="post" enctype="multipart/form-data">
@@ -499,13 +495,13 @@ if ($re !== null && $iaData) {
 <?php if ($semData): ?>
   <?php foreach ($semData as $f): $d = $f['data']; ?>
     <div class="card">
-      <b><?= e($f['filename']) ?></b> — parcours : <b><?= e($d['parcours']) ?></b>
-      <?php if ($d['semester_number'] !== null): ?> — Semestre <b><?= $d['semester_number'] ?></b><?php endif; ?>
+      <b><?= e($f['filename']) ?></b> - parcours : <b><?= e($d['parcours']) ?></b>
+      <?php if ($d['semester_number'] !== null): ?> - Semestre <b><?= $d['semester_number'] ?></b><?php endif; ?>
       <?php if ($selectedSem !== null && $d['semester_number'] !== null && $d['semester_number'] !== $selectedSem): ?>
         <span class="warn"> (attention : ce PV est le semestre <?= $d['semester_number'] ?>, pas le <?= $selectedSem ?> sélectionné)</span>
       <?php endif; ?>
       <div style="margin-top:6px">
-        Étudiants : <b><?= count($d['students']) ?></b> &nbsp;·&nbsp;
+        Étudiants : <b><?= count($d['students']) ?></b> &nbsp;-&nbsp;
         Statut semestre : <?= distHtml(array_column($d['students'], 'sem_status')) ?>
       </div>
       <?php if (!empty($f['warnings'])): ?>
@@ -514,31 +510,29 @@ if ($re !== null && $iaData) {
     </div>
   <?php endforeach; ?>
 
-  <!-- ============ ÉTAPE 3 : CONFIG MATIÈRES ============ -->
+  <!-- ============ ETAPE 3 : CONFIG MATIERES ============ -->
   <?php if ($courses): ?>
   <h2>Étape 3 — Configuration des matières (<?= count($courses) ?> groupes détectés)</h2>
   <div class="card">
-    <p class="muted">Une ligne par groupe de matière (regroupés entre parcours). Coche <b>Affichée ?</b> pour inclure la matière dans le tableau exporté (avec la mention ACQ/NACQ/DEF/DIS, ACQ en surbrillance).
+    <p class="muted">Une ligne par groupe de matière (regroupés entre parcours). Écris un <b>acronyme</b> pour inclure la matière dans le tableau exporté (avec la mention ACQ/NACQ/DEF/DIS, ACQ en surbrillance).
     Pour chaque épreuve, coche si sa <b>note doit être conservée</b> : elle apparaîtra alors dans une colonne, surlignée si elle dépasse le <b>seuil /20</b>.
-    Les cases épreuves sont pré-cochées selon le libellé (ex. « TP/TD ») : ajuste.</p>
-    <p class="muted"><b>Astuce — fusion :</b> donne le <b>même acronyme</b> à deux groupes pour les traiter comme une seule matière. Un acronyme = une matière.</p>
+    Si tu ne coches aucune note pour une matière, la dispense se fait sur ACQ uniquement. Laisser l'acronyme vide = matière non affichée.</p>
+    <p class="muted"><b>Astuce - fusion :</b> donne le <b>même acronyme</b> à deux groupes pour les traiter comme une seule matière. Un acronyme = une matière.</p>
 
     <form method="post">
       <input type="hidden" name="action" value="config">
       <table class="cfg">
         <thead>
           <tr>
-            <th style="width:110px">Acronyme</th>
             <th>Matière</th>
-            <th style="width:70px" class="center">Affichée ?</th>
+            <th style="width:100px">Acronyme</th>
             <th style="width:70px">Seuil/20</th>
             <th>Épreuves → note à conserver</th>
           </tr>
         </thead>
         <tbody>
-        <?php foreach ($courses as $i => $course): $cfg = $courseConfig[$i] ?? courseDefaults($course); $isShown = !empty($cfg['display']); ?>
+        <?php foreach ($courses as $i => $course): $cfg = $courseConfig[$i] ?? courseDefaults($course); $isShown = $cfg['acronym'] !== ''; ?>
           <tr class="<?= $isShown ? 'shown' : '' ?>">
-            <td><input type="text" name="acronym[<?= $i ?>]" value="<?= e($cfg['acronym']) ?>" maxlength="12"></td>
             <td>
               <span class="matter"><?= e($course['name']) ?></span>
               <span class="sub">
@@ -547,7 +541,7 @@ if ($re !== null && $iaData) {
                 <?php else: ?> · spécifique : <?= e(implode(', ', $course['parcours'])) ?><?php endif; ?>
               </span>
             </td>
-            <td class="center"><input type="checkbox" name="display[<?= $i ?>]" <?= $isShown ? 'checked' : '' ?>></td>
+            <td><input type="text" name="acronym[<?= $i ?>]" value="<?= e($cfg['acronym']) ?>" maxlength="12"></td>
             <td><input type="number" step="0.25" min="0" max="20" name="threshold[<?= $i ?>]" value="<?= $cfg['threshold'] === null ? '' : e((string)$cfg['threshold']) ?>"></td>
             <td>
               <?php if (!empty($course['exams'])): ?>
@@ -560,7 +554,7 @@ if ($re !== null && $iaData) {
                 <?php endforeach; ?>
                 </div>
               <?php else: ?>
-                <span class="muted">(aucune épreuve — mention seule)</span>
+                <span class="muted">(aucune épreuve - mention seule)</span>
               <?php endif; ?>
             </td>
           </tr>
@@ -577,15 +571,15 @@ if ($re !== null && $iaData) {
     $nShown = 0;
   ?>
   <div class="card">
-    <b>Récap — matières affichées dans l'export</b>
+    <b>Récap - matières affichées dans l'export</b>
     <table>
-      <thead><tr><th>Acronyme</th><th>Matière</th><th>Affichée</th><th>Seuil</th><th>Notes conservées</th><th>Statut</th></tr></thead>
+      <thead><tr><th>Matière</th><th>Acronyme</th><th>Seuil</th><th>Notes conservées</th><th>Statut</th></tr></thead>
       <tbody>
       <?php
         $nOk = 0;
         $anyMerged = false;
         foreach ($effective as $ev) {
-          if (empty($ev['display'])) {
+          if ($ev['acronym'] === '') {
             continue;
           }
           $nShown++;
@@ -608,11 +602,10 @@ if ($re !== null && $iaData) {
           }
       ?>
         <tr>
-          <td><b><?= e($ev['acronym'] !== '' ? $ev['acronym'] : '—') ?></b></td>
           <td><?= e($ev['name']) ?><?php if ($ev['merged'] > 1): ?> <span class="badge-shared">fusion de <?= $ev['merged'] ?> groupes</span><?php endif; ?></td>
-          <td>oui</td>
-          <td class="num"><?= $ev['threshold'] === null ? '—' : e((string)$ev['threshold']) ?></td>
-          <td class="muted"><?= $anyKept ? e(implode(', ', $kept)) : '— (mention uniquement)' ?></td>
+          <td><b><?= e($ev['acronym']) ?></b></td>
+          <td class="num"><?= $ev['threshold'] === null ? '-' : e((string)$ev['threshold']) ?></td>
+          <td class="muted"><?= $anyKept ? e(implode(', ', $kept)) : '- (mention uniquement)' ?></td>
           <td><?= $issues ? '<span class="warn">' . e(implode(' ; ', $issues)) . '</span>' : '<span class="ok">OK</span>' ?></td>
         </tr>
       <?php } ?>
@@ -635,7 +628,7 @@ if ($re !== null && $iaData) {
   <?php endif; ?>
 <?php endif; ?>
 
-<!-- ================= ÉTAPE 4 : IA + EXPORT INSCRITS ================= -->
+<!-- ================= ETAPE 4 : IA + EXPORT INSCRITS ================= -->
 <h2>Étape 4 — Inscriptions (IA) de la nouvelle année + export des redoublants inscrits</h2>
 <div class="card">
   <form method="post" enctype="multipart/form-data">
@@ -651,7 +644,7 @@ if ($re !== null && $iaData) {
 
 <?php if ($iaData): ?>
   <div class="card">
-    <b>Liste d'inscriptions (IA)</b> — <?= count($iaData['students']) ?> étudiant(s) inscrit(s) la nouvelle année
+    <b>Liste d'inscriptions (IA)</b> - <?= count($iaData['students']) ?> étudiant(s) inscrit(s) la nouvelle année
     <?php if (!empty($iaData['warnings'])): ?>
       <div class="warn"><?= e(implode(' | ', $iaData['warnings'])) ?></div>
     <?php endif; ?>
@@ -659,7 +652,7 @@ if ($re !== null && $iaData) {
       <div style="margin-top:8px">
         <b>Croisement avec les potentiels redoublants :</b>
         <span class="ok"><?= $enrolledRedoublants ?> redoublant(s) effectivement inscrit(s)</span>
-        &nbsp;·&nbsp; <span class="warn"><?= $notEnrolled ?> potentiel(s) redoublant(s) non réinscrit(s) → exclus de l'export</span>
+        &nbsp;-&nbsp; <span class="warn"><?= $notEnrolled ?> potentiel(s) redoublant(s) non réinscrit(s) → exclus de l'export</span>
       </div>
       <?php if ($courseConfig && $selectedSem !== null): ?>
         <div style="margin-top:14px">

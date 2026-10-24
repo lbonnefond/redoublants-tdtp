@@ -72,7 +72,7 @@ class MatterMatcher
 
         foreach ($courses as $i => $course) {
             $cfg = $config[$i] ?? null;
-            $acronym = $cfg ? trim((string)$cfg['acronym']) : '';
+            $acronym = $cfg ? trim((string) $cfg['acronym']) : '';
 
             if ($acronym === '') {
                 $result[] = $this->buildEffective($course, $cfg);
@@ -101,13 +101,13 @@ class MatterMatcher
         }
         return [
             'name' => $course['name'],
-            'acronym' => $cfg ? trim((string)$cfg['acronym']) : '',
+            'acronym' => $cfg ? trim((string) $cfg['acronym']) : '',
             'codes' => $course['codes'],
             'parcours' => $course['parcours'],
             'exams' => $course['exams'],
             'shared' => $course['shared'],
             'threshold' => $cfg ? $cfg['threshold'] : null,
-            'display' => $cfg ? !empty($cfg['display']) : false,
+            'display' => $cfg ? trim((string) $cfg['acronym']) !== '' : false,
             'exams_selected' => $examsSelected,
             'merged' => 1,
         ];
@@ -116,10 +116,16 @@ class MatterMatcher
     /** Combine un groupe source à une matière effective existante (même acronyme). */
     private function mergeEffective(array $a, array $course, ?array $cfg): array
     {
-        foreach ($course['codes'] as $c) {
-            $a['codes'][$c] = true;
+        // Re-normaliser les codes en set (clé = code), pour ne pas confondre
+        // les indices numériques d'une liste avec des codes UE.
+        $codeSet = [];
+        foreach ($a['codes'] as $c) {
+            $codeSet[$c] = true;
         }
-        $a['codes'] = array_keys($a['codes']);
+        foreach ($course['codes'] as $c) {
+            $codeSet[$c] = true;
+        }
+        $a['codes'] = array_keys($codeSet);
 
         foreach ($course['parcours'] as $p) {
             $a['parcours'][$p] = true;
@@ -141,7 +147,7 @@ class MatterMatcher
                     $a['exams_selected'][$label] = true;
                 }
             }
-            $a['display'] = $a['display'] || !empty($cfg['display']);
+            $a['display'] = $a['display'] || trim((string) $cfg['acronym']) !== '';
             if ($a['threshold'] === null && $cfg['threshold'] !== null) {
                 $a['threshold'] = $cfg['threshold'];
             }
@@ -179,12 +185,32 @@ class MatterMatcher
     {
         $s = mb_strtoupper($s, 'UTF-8');
         $map = [
-            'À'=>'A','Â'=>'A','Ä'=>'A','Å'=>'A','Æ'=>'AE','Ç'=>'C',
-            'È'=>'E','Ê'=>'E','Ë'=>'E','É'=>'E',
-            'Ì'=>'I','Î'=>'I','Ï'=>'I','Í'=>'I',
-            'Ò'=>'O','Ô'=>'O','Ö'=>'O','Ó'=>'O',
-            'Ù'=>'U','Û'=>'U','Ü'=>'U','Ú'=>'U',
-            'Ñ'=>'N','ß'=>'SS','Þ'=>'TH','Ý'=>'Y',
+            'À' => 'A',
+            'Â' => 'A',
+            'Ä' => 'A',
+            'Å' => 'A',
+            'Æ' => 'AE',
+            'Ç' => 'C',
+            'È' => 'E',
+            'Ê' => 'E',
+            'Ë' => 'E',
+            'É' => 'E',
+            'Ì' => 'I',
+            'Î' => 'I',
+            'Ï' => 'I',
+            'Í' => 'I',
+            'Ò' => 'O',
+            'Ô' => 'O',
+            'Ö' => 'O',
+            'Ó' => 'O',
+            'Ù' => 'U',
+            'Û' => 'U',
+            'Ü' => 'U',
+            'Ú' => 'U',
+            'Ñ' => 'N',
+            'ß' => 'SS',
+            'Þ' => 'TH',
+            'Ý' => 'Y',
         ];
         $s = strtr($s, $map);
         $s = preg_replace('/[^A-Z0-9]/', '', $s);

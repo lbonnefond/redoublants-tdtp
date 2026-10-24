@@ -29,6 +29,19 @@ class ApofileSemesterParser extends PvParserBase
         $this->readStudents();
     }
 
+    /**
+     * Trouve la colonne de mention d'une UE (« Résultat » ou « Résultats », selon l'uniformisation du PV).
+     */
+    private function findMentionCol(array $b): ?int
+    {
+        for ($c = $b['start']; $c <= $b['end']; $c++) {
+            $h2 = $this->h2[$c];
+            if (strcasecmp($h2, 'Résultat') === 0 || strcasecmp($h2, 'Résultats') === 0) {
+                return $c;
+            }
+        }
+        return null;
+    }
     private function detectLayout(): void
     {
         $firstElp = $this->firstElpStart();
@@ -61,7 +74,7 @@ class ApofileSemesterParser extends PvParserBase
             }
 
             // --- Test matière : Résultat + Crédits ---
-            $resCol = $this->colWithH2($b, 'Résultat');
+            $resCol = $this->findMentionCol($b);
             $credCol = $this->colWithH2($b, 'Crédits');
 
             if ($resCol !== null && $credCol !== null) {
